@@ -9,7 +9,7 @@ object Prefs {
     private const val KEY_CUSTOM_CATS = "custom_cats"
 
     // Ключи настраиваемых иконок интерфейса
-    val ICON_KEYS = listOf("answer", "decline", "search", "tab_dialer", "tab_contacts", "tab_calls", "tab_settings")
+    val ICON_KEYS = listOf("answer", "decline", "search", "tab_home", "tab_dialer")
 
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 

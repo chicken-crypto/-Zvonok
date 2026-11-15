@@ -1,7 +1,6 @@
 package com.example.kotozvonok
 
 import android.Manifest
-import android.app.Activity
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -20,24 +19,32 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.Button
 import android.widget.CompoundButton
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.PopupMenu
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.materialswitch.MaterialSwitch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
+
+    private enum class Screen { HOME, DIALER, CONTACTS, SETTINGS }
 
     private lateinit var content: FrameLayout
     private lateinit var numberField: EditText
-    private var currentTab = 0
+    private lateinit var navContainer: FrameLayout
+    private lateinit var navPill: View
+    private var currentScreen = Screen.HOME
     private val REQ_ADD_CAT = 4
     private val REQ_PICK_ICON = 5
     private var pendingIconKey: String? = null
@@ -50,39 +57,89 @@ class MainActivity : Activity() {
             setBackgroundColor(0xFF15131F.toInt())
         }
 
+        outer.addView(buildTopBar())
+
         content = FrameLayout(this)
         outer.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        outer.addView(buildBottomNav(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        outer.addView(buildBottomNav(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68)))
 
         setContentView(outer)
-        showTab(0)
+        showScreen(Screen.HOME)
     }
 
     override fun onResume() {
         super.onResume()
-        showTab(currentTab) // обновить данные (например список звонков) при возврате в приложение
+        showScreen(currentScreen) // обновить данные (например список звонков) при возврате в приложение
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    // ---------- Нижнее меню ----------
-    private fun buildBottomNav(): LinearLayout {
-        val nav = LinearLayout(this).apply {
+    // ---------- Верхняя панель: "☰" + меню ----------
+    private fun buildTopBar(): LinearLayout {
+        val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(0xFF1D1A2E.toInt())
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xFF15131F.toInt())
+            setPadding(dp(14), dp(16), dp(14), dp(12))
         }
-        val tabs = listOf(
-            Triple("tab_dialer", "⌨️", "Набор"),
-            Triple("tab_contacts", "👤", "Контакты"),
-            Triple("tab_calls", "🕑", "Звонки"),
-            Triple("tab_settings", "⚙️", "Настройки")
-        )
-        tabs.forEachIndexed { i, (key, emoji, label) ->
+        bar.addView(TextView(this).apply {
+            text = "☰"; textSize = 20f; setTextColor(Color.WHITE)
+            setPadding(0, 0, dp(18), 0)
+            setOnClickListener { showTopMenu(it) }
+        })
+        bar.addView(TextView(this).apply {
+            text = "🐱 Котозвонок"; textSize = 19f; setTextColor(Color.WHITE)
+        })
+        return bar
+    }
+
+    private fun showTopMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, "Контакты")
+        popup.menu.add(0, 2, 1, "Настройки")
+        popup.menu.add(0, 3, 2, "Очистить журнал звонков")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> showScreen(Screen.CONTACTS)
+                2 -> showScreen(Screen.SETTINGS)
+                3 -> clearCallLog()
+            }
+            true
+        }
+        popup.show()
+    }
+
+    private fun clearCallLog() {
+        if (checkSelfPermission(Manifest.permission.WRITE_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_CALL_LOG), 1)
+            return
+        }
+        try { contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null) } catch (e: Exception) { }
+        if (currentScreen == Screen.HOME) showScreen(Screen.HOME)
+    }
+
+    // ---------- Нижняя навигация: 2 пункта + "жидкая стеклянная" плашка ----------
+    private fun buildBottomNav(): FrameLayout {
+        val container = FrameLayout(this).apply { setBackgroundColor(0xFF1D1A2E.toInt()) }
+        navContainer = container
+
+        navPill = View(this).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(0x33FFFFFF)
+                setStroke(dp(1), 0x40FFFFFF)
+            }
+        }
+        container.addView(navPill, FrameLayout.LayoutParams(0, dp(50)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val items = listOf(Triple("tab_home", "🏠", "Главный экран"), Triple("tab_dialer", "⌨️", "Клавиатура"))
+        items.forEachIndexed { i, (key, emoji, label) ->
             val col = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setOnClickListener { showTab(i) }
+                setOnClickListener { selectNavTab(i) }
             }
             val icon = Icons.iconView(this, key, emoji, 18f)
             if (icon is android.widget.ImageView) {
@@ -95,34 +152,66 @@ class MainActivity : Activity() {
                 col.addView(icon)
             }
             col.addView(TextView(this).apply { text = label; textSize = 10f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
-            nav.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        return nav
+        container.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        container.post { positionPill(0, animate = false) }
+        return container
     }
 
-    private fun showTab(i: Int) {
-        currentTab = i
+    private fun positionPill(index: Int, animate: Boolean) {
+        val w = navContainer.width
+        if (w == 0) return
+        val half = w / 2
+        val lp = navPill.layoutParams as FrameLayout.LayoutParams
+        lp.width = half - dp(16)
+        lp.marginStart = dp(8)
+        navPill.layoutParams = lp
+        val targetX = (half * index).toFloat()
+        if (animate) navPill.animate().translationX(targetX).setDuration(260).start()
+        else navPill.translationX = targetX
+    }
+
+    private fun selectNavTab(i: Int) {
+        positionPill(i, animate = true)
+        showScreen(if (i == 0) Screen.HOME else Screen.DIALER)
+    }
+
+    private fun showScreen(s: Screen) {
+        currentScreen = s
         content.removeAllViews()
-        val view = when (i) {
-            0 -> buildDialerTab()
-            1 -> buildContactsTab()
-            2 -> buildCallsTab()
-            else -> buildSettingsTab()
+        val view = when (s) {
+            Screen.HOME -> buildCallsTab()
+            Screen.DIALER -> buildDialerTab()
+            Screen.CONTACTS -> buildContactsTab()
+            Screen.SETTINGS -> buildSettingsTab()
         }
         content.addView(view)
+        if (::navContainer.isInitialized) {
+            when (s) {
+                Screen.HOME -> positionPill(0, animate = true)
+                Screen.DIALER -> positionPill(1, animate = true)
+                else -> { /* контакты/настройки открыты через меню, плашку не трогаем */ }
+            }
+        }
     }
 
-    private fun card(block: LinearLayout.() -> Unit): LinearLayout {
-        val c = LinearLayout(this).apply {
+    private fun card(block: LinearLayout.() -> Unit): MaterialCardView {
+        val inner = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(0xFF211E30.toInt()) }
             setPadding(dp(14), dp(12), dp(14), dp(12))
         }
-        c.block()
-        return c
+        inner.block()
+        return MaterialCardView(this).apply {
+            radius = dp(16).toFloat()
+            cardElevation = dp(1).toFloat()
+            setCardBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.md_surface))
+            addView(inner, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
     }
 
-    // ---------- Вкладка: набор номера ----------
+    // ---------- Экран: набор номера (Клавиатура) ----------
     private fun buildDialerTab(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -138,7 +227,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             inputType = InputType.TYPE_CLASS_PHONE
             background = null
-            isFocusable = false // набираем кнопками, как в обычной звонилке
+            isFocusable = false
         }
         root.addView(numberField, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) })
 
@@ -188,7 +277,7 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:$number")))
     }
 
-    // ---------- Вкладка: контакты ----------
+    // ---------- Экран: контакты (из меню "☰") ----------
     private fun buildContactsTab(): View {
         if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return permissionNeededView("Нужен доступ к контактам") {
@@ -222,13 +311,13 @@ class MainActivity : Activity() {
             }
         }
         lv.onItemClickListener = AdapterView.OnItemClickListener { _, _, pos, _ ->
-            showTab(0)
+            selectNavTab(1)
             numberField.setText(list[pos].number)
         }
         return lv
     }
 
-    // ---------- Вкладка: журнал звонков ----------
+    // ---------- Экран: главный экран (журнал звонков) ----------
     private fun buildCallsTab(): View {
         if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
             return permissionNeededView("Нужен доступ к журналу звонков") {
@@ -273,7 +362,7 @@ class MainActivity : Activity() {
             }
         }
         lv.onItemClickListener = AdapterView.OnItemClickListener { _, _, pos, _ ->
-            showTab(0)
+            selectNavTab(1)
             numberField.setText(list[pos].number)
         }
         return lv
@@ -282,9 +371,8 @@ class MainActivity : Activity() {
     private fun permissionNeededView(msg: String, action: () -> Unit): View {
         val l = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(24), dp(24), dp(24), dp(24)) }
         l.addView(TextView(this).apply { text = msg; setTextColor(Color.WHITE); textSize = 15f; gravity = Gravity.CENTER })
-        l.addView(Button(this).apply {
-            text = "Разрешить"; isAllCaps = false; setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(0xFF4F6DF5.toInt()) }
+        l.addView(MaterialButton(this).apply {
+            text = "Разрешить"; isAllCaps = false; cornerRadius = dp(12)
             setOnClickListener { action() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
         return l
@@ -295,21 +383,22 @@ class MainActivity : Activity() {
         addView(TextView(this@MainActivity).apply { text = msg; setTextColor(0xFFA29FB8.toInt()); textSize = 15f; gravity = Gravity.CENTER })
     }
 
-    // ---------- Вкладка: настройки ----------
+    // ---------- Экран: настройки (из меню "☰") ----------
     private fun buildSettingsTab(): View {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(18), dp(18), dp(18)) }
 
         fun sectionTitle(t: String) {
             root.addView(TextView(this).apply { text = t; textSize = 13f; setTextColor(0xFF8FA2FF.toInt()); setPadding(0, dp(14), 0, dp(6)) })
         }
-        fun addCard(v: LinearLayout) {
+        fun addCard(v: View) {
             root.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         }
         fun button(t: String, action: (View) -> Unit) {
             addCard(card {
-                addView(Button(this@MainActivity).apply {
-                    text = t; isAllCaps = false; setTextColor(Color.WHITE)
-                    background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(0xFF4F6DF5.toInt()) }
+                addView(MaterialButton(this@MainActivity).apply {
+                    text = t
+                    isAllCaps = false
+                    cornerRadius = dp(12)
                     setOnClickListener(action)
                 })
             })
@@ -321,6 +410,7 @@ class MainActivity : Activity() {
         button("Доступ к звонкам и контактам") {
             requestPermissions(arrayOf(
                 Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG,
+                Manifest.permission.WRITE_CALL_LOG,
                 Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE
             ), 1)
         }
@@ -345,7 +435,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@MainActivity).apply { text = "Полноэкранный звонок"; setTextColor(Color.WHITE); textSize = 14f },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(Switch(this@MainActivity).apply {
+            addView(MaterialSwitch(this@MainActivity).apply {
                 isChecked = Prefs.isFullScreenEnabled(this@MainActivity)
                 setOnCheckedChangeListener { _: CompoundButton, c: Boolean -> Prefs.setFullScreenEnabled(this@MainActivity, c) }
             })
@@ -354,7 +444,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@MainActivity).apply { text = "Показывать котиков"; setTextColor(Color.WHITE); textSize = 14f },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(Switch(this@MainActivity).apply {
+            addView(MaterialSwitch(this@MainActivity).apply {
                 isChecked = Prefs.isCatsEnabled(this@MainActivity)
                 setOnCheckedChangeListener { _: CompoundButton, c: Boolean -> Prefs.setCatsEnabled(this@MainActivity, c) }
             })
@@ -371,7 +461,7 @@ class MainActivity : Activity() {
         })
         button("🗑 Удалить всех добавленных котов") {
             Prefs.clearCustomCats(this)
-            showTab(3)
+            showScreen(Screen.SETTINGS)
         }
 
         sectionTitle("ИКОНКИ КНОПОК И ВКЛАДОК")
@@ -379,10 +469,8 @@ class MainActivity : Activity() {
             "answer" to "Иконка кнопки «Ответить»",
             "decline" to "Иконка кнопки «Отклонить»",
             "search" to "Иконка кнопки «Поиск»",
-            "tab_dialer" to "Иконка вкладки «Набор»",
-            "tab_contacts" to "Иконка вкладки «Контакты»",
-            "tab_calls" to "Иконка вкладки «Звонки»",
-            "tab_settings" to "Иконка вкладки «Настройки»"
+            "tab_home" to "Иконка вкладки «Главный экран»",
+            "tab_dialer" to "Иконка вкладки «Клавиатура»"
         )
         iconLabels.forEach { (key, label) ->
             button(label) {
@@ -393,7 +481,7 @@ class MainActivity : Activity() {
         }
         button("↺ Сбросить все иконки к стандартным") {
             Prefs.clearAllIcons(this)
-            showTab(3)
+            showScreen(Screen.SETTINGS)
         }
 
         sectionTitle("ЗНАЧОК ПРИЛОЖЕНИЯ (рабочий стол)")
@@ -438,9 +526,9 @@ class MainActivity : Activity() {
             data?.data?.let { uri ->
                 try {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                } catch (e: Exception) { /* некоторые источники не дают постоянный доступ, не страшно */ }
+                } catch (e: Exception) { }
                 Prefs.addCustomCat(this, uri.toString())
-                showTab(3)
+                showScreen(Screen.SETTINGS)
             }
         }
         if (requestCode == REQ_PICK_ICON && resultCode == RESULT_OK) {
@@ -450,24 +538,22 @@ class MainActivity : Activity() {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (e: Exception) { }
                 if (key != null) Prefs.setIcon(this, key, uri.toString())
-                showTab(3)
+                showScreen(Screen.SETTINGS)
             }
             pendingIconKey = null
         }
     }
 
-    // Переключение между заранее заготовленными значками приложения на рабочем столе.
-    // Произвольное фото системой здесь не поддерживается без пересборки APK.
     private fun setLauncherIcon(enableAlias: String) {
         val aliases = listOf("IconDefault", "IconCat1", "IconCat3")
         aliases.forEach { name ->
-            val state = if (name == enableAlias) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                        else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            val state = if (name == enableAlias) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        else PackageManager.COMPONENT_ENABLED_STATE_DISABLED
             try {
                 packageManager.setComponentEnabledSetting(
                     android.content.ComponentName(packageName, "$packageName.$name"),
                     state,
-                    android.content.pm.PackageManager.DONT_KILL_APP
+                    PackageManager.DONT_KILL_APP
                 )
             } catch (e: Exception) { }
         }
