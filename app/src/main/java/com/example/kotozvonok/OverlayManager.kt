@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -23,7 +25,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
-// Компактное "стеклянное" окошко звонка: аватар+имя+номер слева, три круглые кнопки справа.
+// Компактное "стеклянное" окошко звонка: аватар+имя+номер слева, круглые кнопки справа.
 object OverlayManager {
     private var outerView: View? = null
     private val animators = mutableListOf<ObjectAnimator>()
@@ -35,8 +37,12 @@ object OverlayManager {
     private var buttonsRow: LinearLayout? = null
     private var timerHandler: Handler? = null
     private var callStartMs = 0L
+    private var ringtone: Ringtone? = null
 
-    private fun dp(context: Context, v: Int) = (v * context.resources.displayMetrics.density).toInt()
+    private fun dp(context: Context, v: Int): Int {
+        val scale = Prefs.overlayScale(context)
+        return (v * scale * context.resources.displayMetrics.density).toInt()
+    }
 
     private fun glassOval(context: Context, colorHex: Int): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
@@ -44,12 +50,32 @@ object OverlayManager {
         setStroke(dp(context, 1), 0x40FFFFFF)
     }
 
-    fun show(context: Context, name: String, number: String, call: Call?) {
+    private fun playRingtone(context: Context) {
+        stopRingtone()
+        try {
+            val uriStr = Prefs.ringtoneUri(context)
+            val uri = if (uriStr != null) Uri.parse(uriStr) else RingtoneManager.getActualDefaultRingtoneUri(context, RingtoneManager.TYPE_RINGTONE)
+            if (uri != null) {
+                ringtone = RingtoneManager.getRingtone(context, uri)
+                ringtone?.play()
+            }
+        } catch (e: Exception) { }
+    }
+
+    private fun stopRingtone() {
+        try { ringtone?.stop() } catch (e: Exception) { }
+        ringtone = null
+    }
+
+    fun show(context: Context, name: String, number: String, call: Call?, isTest: Boolean = false) {
         val app = context.applicationContext
         if (!Settings.canDrawOverlays(app)) return
         hide(app)
         val wm = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         fun dp(v: Int) = dp(app, v)
+        val accent = Prefs.accentColor(app)
+
+        playRingtone(app)
 
         val card = LinearLayout(app).apply {
             orientation = LinearLayout.VERTICAL
@@ -63,7 +89,6 @@ object OverlayManager {
             elevation = dp(10).toFloat()
         }
 
-        // Верхняя строка: аватар, текст, кнопки справа
         val topRow = LinearLayout(app).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -95,21 +120,22 @@ object OverlayManager {
             marginStart = dp(8); marginEnd = dp(6)
         })
 
-        fun roundBtn(key: String, emoji: String, colorHex: Int, onClick: () -> Unit): View {
-            val inner = Icons.iconView(app, key, emoji, 14f)
+        fun roundBtn(key: String, fallbackRes: Int, colorHex: Int, onClick: () -> Unit): View {
+            val icon = Icons.iconView(app, key, fallbackRes, Color.WHITE)
+            icon.setPadding(dp(7), dp(7), dp(7), dp(7))
             val box = FrameLayout(app).apply {
                 background = glassOval(app, colorHex)
                 isClickable = true
                 setOnClickListener { onClick() }
             }
-            if (inner is ImageView) {
-                inner.clipToOutline = true
-                inner.outlineProvider = object : ViewOutlineProvider() {
+            if (Icons.isCustom(app, key)) {
+                icon.clipToOutline = true
+                icon.outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
                 }
-                box.addView(inner, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                box.addView(icon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             } else {
-                box.addView(inner, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                box.addView(icon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             }
             return box
         }
@@ -117,21 +143,32 @@ object OverlayManager {
         val btnRow = LinearLayout(app).apply { orientation = LinearLayout.HORIZONTAL }
         buttonsRow = btnRow
 
-        val searchBtn = roundBtn("search", "🔍", 0xCC4F6DF5.toInt()) {
+        val searchBtn = roundBtn("search", R.drawable.ic_search, (0xCC000000.toInt() or (accent and 0x00FFFFFF))) {
             val url = "https://www.google.com/search?q=" + Uri.encode(number)
             app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
         btnRow.addView(searchBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(5) })
 
-        val declineBtn = roundBtn("decline", "✕", 0xE6E5484D.toInt()) {
-            call?.reject(false, null)
-            hide(app)
+        val declineBtn = roundBtn("decline", R.drawable.ic_close, 0xE6E5484D.toInt()) {
+            stopRingtone()
+            if (isTest) {
+                hide(app)
+            } else {
+                call?.reject(false, null)
+                hide(app)
+            }
         }
         decBtn = declineBtn
         btnRow.addView(declineBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(5) })
 
-        val answerBtn = roundBtn("answer", "✆", 0xE62FBF71.toInt()) {
-            call?.answer(0)
+        val answerBtn = roundBtn("answer", R.drawable.ic_check, 0xE62FBF71.toInt()) {
+            stopRingtone()
+            if (isTest) {
+                onAnswered(app)
+                TestCall.playWhiteNoiseThenEnd(5000) { hide(app) }
+            } else {
+                call?.answer(0)
+            }
         }
         ansBtn = answerBtn
         btnRow.addView(answerBtn, LinearLayout.LayoutParams(dp(32), dp(32)))
@@ -139,7 +176,6 @@ object OverlayManager {
         topRow.addView(btnRow)
         card.addView(topRow)
 
-        // Узкая полоска котиков под основной строкой (пропускаем, если коты выключены в настройках)
         if (Avatars.catsEnabled(app)) {
             val row = LinearLayout(app).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -169,7 +205,6 @@ object OverlayManager {
             }
         }
 
-        // Окошко теперь ближе к самому верху экрана
         val outer = FrameLayout(app).apply { setPadding(dp(8), dp(4), dp(8), 0) }
         outer.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -184,21 +219,31 @@ object OverlayManager {
         outerView = outer
     }
 
-    // Вызывается, когда собеседник по-настоящему принял/мы приняли звонок
+    // Сразу показать компактный "остров" в режиме разговора (например, после сворачивания с полного экрана)
+    fun showActive(context: Context, name: String, number: String) {
+        show(context, name, number, CallManager.activeCall, isTest = false)
+        onAnswered(context)
+    }
+
     fun onAnswered(context: Context) {
         val app = context.applicationContext
+        stopRingtone()
         val parent = buttonsRow ?: return
         decBtn?.visibility = View.GONE
         ansBtn?.visibility = View.GONE
         catsRow?.visibility = View.GONE
 
-        val hang = TextView(app).apply {
-            text = "☎"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            background = glassOval(app, 0xE6E5484D.toInt())
+        val hangIcon = Icons.iconView(app, "__hangup_internal__", R.drawable.ic_close, Color.WHITE)
+        hangIcon.setPadding(dp(app, 7), dp(app, 7), dp(app, 7), dp(app, 7))
+        val hang = FrameLayout(app).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xE6E5484D.toInt())
+                setStroke(dp(app, 1), 0x40FFFFFF)
+            }
+            addView(hangIcon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             setOnClickListener {
+                TestCall.stop()
                 CallManager.activeCall?.disconnect()
                 hide(app)
             }
@@ -219,6 +264,8 @@ object OverlayManager {
     }
 
     fun hide(context: Context) {
+        stopRingtone()
+        TestCall.stop()
         animators.forEach { it.cancel() }
         animators.clear()
         timerHandler?.removeCallbacksAndMessages(null)

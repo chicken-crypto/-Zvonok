@@ -2,6 +2,7 @@ package com.example.kotozvonok
 
 import android.animation.ObjectAnimator
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Outline
 import android.net.Uri
@@ -21,16 +22,22 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 
-// Это и есть замена стандартного экрана входящего звонка.
-// Запускает его CallUiService, когда звонок появляется в системе.
+// Полноэкранная замена стандартного экрана входящего звонка.
+// Запускается из CallUiService, а также в тестовом режиме (EXTRA_IS_TEST) из настроек.
 class CallScreenActivity : AppCompatActivity() {
     private val animators = mutableListOf<ObjectAnimator>()
     private var callback: Call.Callback? = null
+    private var isTest = false
+
+    companion object {
+        const val EXTRA_IS_TEST = "is_test"
+        const val EXTRA_NAME = "test_name"
+        const val EXTRA_NUMBER = "test_number"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Показываем поверх экрана блокировки и включаем экран, как настоящий звонок
         if (Build.VERSION.SDK_INT >= 27) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -43,21 +50,26 @@ class CallScreenActivity : AppCompatActivity() {
             )
         }
 
-        val call = CallManager.activeCall
-        if (call == null) { finish(); return }
+        isTest = intent.getBooleanExtra(EXTRA_IS_TEST, false)
+        val call = if (isTest) null else CallManager.activeCall
+        if (!isTest && call == null) { finish(); return }
 
-        val number = call.details.handle?.schemeSpecificPart ?: "Номер скрыт"
-        val name = call.details.callerDisplayName ?: lookupContactName(number) ?: "Неизвестный"
+        val number = if (isTest) intent.getStringExtra(EXTRA_NUMBER) ?: "+7 900 000-00-00"
+                     else call!!.details.handle?.schemeSpecificPart ?: "Номер скрыт"
+        val name = if (isTest) intent.getStringExtra(EXTRA_NAME) ?: "Тестовый Котик"
+                   else call!!.details.callerDisplayName ?: lookupContactName(number) ?: "Неизвестный"
 
         buildUi(name, number)
 
-        val cb = object : Call.Callback() {
-            override fun onStateChanged(c: Call, state: Int) {
-                if (state == Call.STATE_DISCONNECTED) finish()
+        if (!isTest && call != null) {
+            val cb = object : Call.Callback() {
+                override fun onStateChanged(c: Call, state: Int) {
+                    if (state == Call.STATE_DISCONNECTED) finish()
+                }
             }
+            callback = cb
+            call.registerCallback(cb)
         }
-        callback = cb
-        call.registerCallback(cb)
     }
 
     private fun lookupContactName(number: String): String? = try {
@@ -69,6 +81,16 @@ class CallScreenActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun matchWrap() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+    private fun pillButton(text: String, iconRes: Int, colorHex: Int): MaterialButton = MaterialButton(this).apply {
+        this.text = text
+        isAllCaps = false
+        cornerRadius = dp(28)
+        setIconResource(iconRes)
+        iconTint = ColorStateList.valueOf(Color.WHITE)
+        iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+        backgroundTintList = ColorStateList.valueOf(colorHex)
+    }
 
     private fun buildUi(name: String, number: String) {
         val root = LinearLayout(this).apply {
@@ -84,7 +106,6 @@ class CallScreenActivity : AppCompatActivity() {
             text = name; setTextColor(Color.WHITE); textSize = 28f; gravity = Gravity.CENTER
             setPadding(0, dp(16), 0, dp(4))
         }, matchWrap())
-        // Номер - мелким шрифтом, как просили
         root.addView(TextView(this).apply {
             text = number; setTextColor(0xFF8FA2FF.toInt()); textSize = 13f; gravity = Gravity.CENTER
         }, matchWrap())
@@ -115,11 +136,7 @@ class CallScreenActivity : AppCompatActivity() {
             }
         }
 
-        // Кнопка поиска номера в браузере - прямо на экране звонка
-        root.addView(MaterialButton(this).apply {
-            text = "🔍 Найти номер в браузере"
-            isAllCaps = false
-            cornerRadius = dp(14)
+        root.addView(pillButton("Найти номер в браузере", R.drawable.ic_search, 0xFF4F6DF5.toInt()).apply {
             setOnClickListener {
                 val url = "https://www.google.com/search?q=" + Uri.encode(number)
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -129,23 +146,38 @@ class CallScreenActivity : AppCompatActivity() {
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(16), 0, dp(8))
         }
-        buttons.addView(MaterialButton(this).apply {
-            text = "✕ Сбросить"
-            isAllCaps = false
-            cornerRadius = dp(14)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFE5484D.toInt())
-            setOnClickListener { CallManager.activeCall?.reject(false, null); finish() }
+        buttons.addView(pillButton("Сбросить", R.drawable.ic_close, 0xFFE5484D.toInt()).apply {
+            setOnClickListener {
+                if (isTest) { finish() } else { CallManager.activeCall?.reject(false, null); finish() }
+            }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        buttons.addView(MaterialButton(this).apply {
-            text = "✆ Ответить"
-            isAllCaps = false
-            cornerRadius = dp(14)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF2FBF71.toInt())
-            setOnClickListener { CallManager.activeCall?.answer(0); finish() }
+        buttons.addView(pillButton("Ответить", R.drawable.ic_check, 0xFF2FBF71.toInt()).apply {
+            setOnClickListener { onAnswerPressed(name, number) }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
         root.addView(buttons, matchWrap())
 
         setContentView(root)
+    }
+
+    private fun onAnswerPressed(name: String, number: String) {
+        val collapse = Prefs.collapseToIslandOnAnswer(this)
+        if (isTest) {
+            if (collapse) {
+                OverlayManager.show(this, name, number, null, isTest = true)
+                OverlayManager.onAnswered(this)
+                TestCall.playWhiteNoiseThenEnd(5000) { OverlayManager.hide(this) }
+                finish()
+            } else {
+                TestCall.playWhiteNoiseThenEnd(5000) { finish() }
+            }
+        } else {
+            CallManager.activeCall?.answer(0)
+            if (collapse) {
+                OverlayManager.showActive(this, name, number)
+                finish()
+            }
+            // если не сворачивать — полноэкранный вид сам закроется по дисконнекту звонка
+        }
     }
 
     override fun onDestroy() {
