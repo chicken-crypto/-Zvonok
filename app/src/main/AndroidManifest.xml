@@ -8,14 +8,48 @@
 
     <application
         android:label="Котозвонок"
+        android:icon="@drawable/cat6"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true" />
+
+        <!-- Значок приложения на рабочем столе: три готовых варианта, переключаются из настроек -->
+        <activity-alias
+            android:name=".IconDefault"
+            android:enabled="true"
+            android:icon="@drawable/cat6"
+            android:label="Котозвонок"
+            android:targetActivity=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconCat1"
+            android:enabled="false"
+            android:icon="@drawable/cat1"
+            android:label="Котозвонок"
+            android:targetActivity=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconCat3"
+            android:enabled="false"
+            android:icon="@drawable/cat3"
+            android:label="Котозвонок"
+            android:targetActivity=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- Экран, который заменяет стандартный экран входящего звонка -->
         <activity
