@@ -1,7 +1,6 @@
 package com.example.kotozvonok
 
 import android.animation.ObjectAnimator
-import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Outline
@@ -16,14 +15,15 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
-import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
 
 // Это и есть замена стандартного экрана входящего звонка.
 // Запускает его CallUiService, когда звонок появляется в системе.
-class CallScreenActivity : Activity() {
+class CallScreenActivity : AppCompatActivity() {
     private val animators = mutableListOf<ObjectAnimator>()
     private var callback: Call.Callback? = null
 
@@ -116,8 +116,10 @@ class CallScreenActivity : Activity() {
         }
 
         // Кнопка поиска номера в браузере - прямо на экране звонка
-        root.addView(Button(this).apply {
+        root.addView(MaterialButton(this).apply {
             text = "🔍 Найти номер в браузере"
+            isAllCaps = false
+            cornerRadius = dp(14)
             setOnClickListener {
                 val url = "https://www.google.com/search?q=" + Uri.encode(number)
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -127,12 +129,18 @@ class CallScreenActivity : Activity() {
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(16), 0, dp(8))
         }
-        buttons.addView(Button(this).apply {
+        buttons.addView(MaterialButton(this).apply {
             text = "✕ Сбросить"
+            isAllCaps = false
+            cornerRadius = dp(14)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFE5484D.toInt())
             setOnClickListener { CallManager.activeCall?.reject(false, null); finish() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        buttons.addView(Button(this).apply {
+        buttons.addView(MaterialButton(this).apply {
             text = "✆ Ответить"
+            isAllCaps = false
+            cornerRadius = dp(14)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF2FBF71.toInt())
             setOnClickListener { CallManager.activeCall?.answer(0); finish() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
         root.addView(buttons, matchWrap())
