@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Настоящая тема Material 3 (Material You). На Android 12+ цвета могут
+         автоматически подстраиваться под обои пользователя (Dynamic Color). -->
+    <style name="Theme.KotoZvonok" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/md_primary</item>
+        <item name="colorOnPrimary">@color/md_on_primary</item>
+        <item name="colorSecondary">@color/md_secondary</item>
+        <item name="colorSurface">@color/md_surface</item>
+        <item name="colorOnSurface">@color/md_on_surface</item>
+        <item name="android:colorBackground">@color/md_background</item>
+        <item name="android:statusBarColor">@color/md_background</item>
+    </style>
+</resources>
