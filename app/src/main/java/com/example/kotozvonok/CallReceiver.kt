@@ -9,17 +9,21 @@ import android.net.Uri
 import android.provider.ContactsContract
 import android.telephony.TelephonyManager
 
+// Запасной путь на случай, если приложение НЕ назначено звонилкой по умолчанию.
+// Если оно назначено — всем управляет CallUiService, и этот приёмник ничего не делает,
+// чтобы не показывать второе, "ненастоящее" окно поверх настоящего.
 class CallReceiver : BroadcastReceiver() {
     @Suppress("DEPRECATION")
     override fun onReceive(ctx: Context, intent: Intent) {
         if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+        if (CallManager.activeCall != null) return // CallUiService уже всё показывает сам
+
         when (intent.getStringExtra(TelephonyManager.EXTRA_STATE)) {
             TelephonyManager.EXTRA_STATE_RINGING -> {
-                // Система присылает два события, в первом номера может не быть
                 val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
                 if (number.isNullOrEmpty()) return
                 val name = lookupName(ctx, number) ?: "Неизвестный"
-                OverlayManager.show(ctx, name, number)
+                OverlayManager.show(ctx, name, number, null)
             }
             TelephonyManager.EXTRA_STATE_OFFHOOK,
             TelephonyManager.EXTRA_STATE_IDLE -> OverlayManager.hide(ctx)

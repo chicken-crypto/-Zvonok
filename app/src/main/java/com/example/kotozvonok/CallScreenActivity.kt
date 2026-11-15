@@ -25,10 +25,6 @@ import android.widget.TextView
 // Запускает его CallUiService, когда звонок появляется в системе.
 class CallScreenActivity : Activity() {
     private val animators = mutableListOf<ObjectAnimator>()
-    private val cats = intArrayOf(
-        R.drawable.cat1, R.drawable.cat2, R.drawable.cat3,
-        R.drawable.cat4, R.drawable.cat5, R.drawable.cat6
-    )
     private var callback: Call.Callback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,25 +91,27 @@ class CallScreenActivity : Activity() {
 
         root.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
 
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; gravity = Gravity.BOTTOM }
-        root.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(90)))
-        cats.forEachIndexed { i, res ->
-            val iv = ImageView(this).apply {
-                setImageResource(res)
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
+        if (Avatars.catsEnabled(this)) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; gravity = Gravity.BOTTOM }
+            root.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(90)))
+            for (i in 0 until 6) {
+                val iv = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    clipToOutline = true
+                    outlineProvider = object : ViewOutlineProvider() {
+                        override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
+                    }
                 }
-            }
-            row.addView(iv, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
-            animators += ObjectAnimator.ofFloat(iv, "translationY", 0f, -dp(40).toFloat()).apply {
-                duration = 380L + i * 50L
-                startDelay = i * 90L
-                repeatCount = ObjectAnimator.INFINITE
-                repeatMode = ObjectAnimator.REVERSE
-                interpolator = DecelerateInterpolator()
-                start()
+                Avatars.randomInto(this, iv)
+                row.addView(iv, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+                animators += ObjectAnimator.ofFloat(iv, "translationY", 0f, -dp(40).toFloat()).apply {
+                    duration = 380L + i * 50L
+                    startDelay = i * 90L
+                    repeatCount = ObjectAnimator.INFINITE
+                    repeatMode = ObjectAnimator.REVERSE
+                    interpolator = DecelerateInterpolator()
+                    start()
+                }
             }
         }
 
