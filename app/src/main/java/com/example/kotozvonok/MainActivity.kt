@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closeDrawer() {
-        val container = drawerView ?: return
+        val container = drawerView as? ViewGroup ?: return
         val panel = container.getChildAt(1)
         val scrim = container.getChildAt(0)
         panel.animate().translationX(-panel.width.toFloat()).setDuration(220).withEndAction {
