@@ -12,6 +12,7 @@ object Prefs {
     private const val KEY_OVERLAY_SCALE = "overlay_scale"
     private const val KEY_RINGTONE = "ringtone_uri"
     private const val KEY_COLLAPSE_TO_ISLAND = "collapse_to_island"
+    private const val KEY_CUSTOM_FONT_PATH = "custom_font_path"
 
     // Ключи настраиваемых иконок интерфейса
     val ICON_KEYS = listOf("answer", "decline", "search", "tab_home", "tab_dialer")
@@ -62,10 +63,15 @@ object Prefs {
         prefs(context).edit().putInt(KEY_ACCENT, color).apply()
     }
 
-    // "default" | "sans" | "serif" | "mono"
+    // "default" | "sans" | "serif" | "mono" | "sfpro" | "custom"
     fun fontFamily(context: Context): String = prefs(context).getString(KEY_FONT, "default") ?: "default"
     fun setFontFamily(context: Context, family: String) {
         prefs(context).edit().putString(KEY_FONT, family).apply()
+    }
+
+    fun customFontPath(context: Context): String? = prefs(context).getString(KEY_CUSTOM_FONT_PATH, null)
+    fun setCustomFontPath(context: Context, path: String?) {
+        prefs(context).edit().putString(KEY_CUSTOM_FONT_PATH, path).apply()
     }
 
     // 0.85 / 1.0 / 1.25

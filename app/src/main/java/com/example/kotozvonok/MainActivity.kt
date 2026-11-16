@@ -17,7 +17,9 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.telecom.TelecomManager
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -30,14 +32,15 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,16 +49,20 @@ class MainActivity : AppCompatActivity() {
 
     private enum class Screen { HOME, DIALER, CONTACTS, SETTINGS }
 
+    private lateinit var rootFrame: FrameLayout
     private lateinit var content: FrameLayout
     private lateinit var numberField: EditText
     private lateinit var suggestionsList: ListView
+    private lateinit var searchField: EditText
     private lateinit var navContainer: FrameLayout
-    private lateinit var navPill: View
+    private lateinit var navPill: LiquidGlassView
+    private var drawerView: View? = null
     private var currentScreen = Screen.HOME
-    private var callFilter = 0 // 0=Все 1=Пропущенные 2=Контакты
+    private var callFilter = 0
     private val REQ_ADD_CAT = 4
     private val REQ_PICK_ICON = 5
     private val REQ_RINGTONE = 6
+    private val REQ_PICK_FONT = 7
     private var pendingIconKey: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,7 +72,6 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFF15131F.toInt())
         }
-
         outer.addView(buildTopBar())
 
         content = FrameLayout(this)
@@ -73,7 +79,9 @@ class MainActivity : AppCompatActivity() {
 
         outer.addView(buildBottomNav(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68)))
 
-        setContentView(outer)
+        rootFrame = FrameLayout(this)
+        rootFrame.addView(outer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        setContentView(rootFrame)
         showScreen(Screen.HOME)
     }
 
@@ -82,13 +90,25 @@ class MainActivity : AppCompatActivity() {
         showScreen(currentScreen)
     }
 
+    override fun onBackPressed() {
+        if (drawerView != null) { closeDrawer(); return }
+        super.onBackPressed()
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun fontTypeface(): Typeface? = when (Prefs.fontFamily(this)) {
-        "sans" -> Typeface.SANS_SERIF
-        "serif" -> Typeface.SERIF
-        "mono" -> Typeface.MONOSPACE
-        else -> null
+    private fun fontTypeface(): Typeface? {
+        return when (Prefs.fontFamily(this)) {
+            "sans" -> Typeface.SANS_SERIF
+            "serif" -> Typeface.SERIF
+            "mono" -> Typeface.MONOSPACE
+            "sfpro" -> try { ResourcesCompat.getFont(this, R.font.sf_pro_text) } catch (e: Exception) { null }
+            "custom" -> {
+                val path = Prefs.customFontPath(this)
+                if (path != null) try { Typeface.createFromFile(path) } catch (e: Exception) { null } else null
+            }
+            else -> null
+        }
     }
 
     private fun applyFont(view: View) {
@@ -100,39 +120,101 @@ class MainActivity : AppCompatActivity() {
         walk(view)
     }
 
-    // ---------- Верхняя панель ----------
+    // ---------- Верхняя панель: "☰" + поиск контактов ----------
     private fun buildTopBar(): LinearLayout {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(0xFF15131F.toInt())
-            setPadding(dp(14), dp(16), dp(14), dp(12))
+            setPadding(dp(14), dp(14), dp(14), dp(10))
         }
         bar.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_menu)
             setColorFilter(Color.WHITE)
-            setOnClickListener { showTopMenu(it) }
-        }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(18) })
-        bar.addView(TextView(this).apply {
-            text = "Котозвонок"; textSize = 19f; setTextColor(Color.WHITE)
-        })
+            setOnClickListener { openDrawer() }
+        }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(14) })
+
+        val accent = Prefs.accentColor(this)
+        val searchBox = LiquidGlassView(this).apply {
+            setGlassColor((0x22000000.toInt()) or (accent and 0x00FFFFFF))
+            setCorner(dp(22).toFloat())
+            setupWithActivityRoot()
+        }
+        searchField = EditText(this).apply {
+            hint = "Поиск контактов"
+            setHintTextColor(0xFFB3AFC9.toInt())
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            background = null
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) { showScreen(Screen.CONTACTS) }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, count: Int, before: Int) {}
+            })
+        }
+        searchBox.addView(searchField, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        bar.addView(searchBox, LinearLayout.LayoutParams(0, dp(44), 1f))
         return bar
     }
 
-    private fun showTopMenu(anchor: View) {
-        val popup = PopupMenu(this, anchor)
-        popup.menu.add(0, 1, 0, "Контакты")
-        popup.menu.add(0, 2, 1, "Настройки")
-        popup.menu.add(0, 3, 2, "Очистить журнал звонков")
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> showScreen(Screen.CONTACTS)
-                2 -> showScreen(Screen.SETTINGS)
-                3 -> clearCallLog()
-            }
-            true
+    // ---------- Выезжающая панель-меню (половина экрана, "жидкое стекло") ----------
+    private fun openDrawer() {
+        if (drawerView != null) return
+        val panelWidth = resources.displayMetrics.widthPixels / 2
+
+        val scrim = View(this).apply {
+            setBackgroundColor(0x99000000.toInt())
+            alpha = 0f
+            setOnClickListener { closeDrawer() }
         }
-        popup.show()
+        val panel = LiquidGlassView(this).apply {
+            setGlassColor(0x30FFFFFF)
+            setupWithActivityRoot()
+        }
+        val menu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(64), dp(18), dp(18))
+        }
+        menu.addView(TextView(this).apply {
+            text = "Котозвонок"; setTextColor(Color.WHITE); textSize = 18f; gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(20))
+        })
+        fun item(label: String, action: () -> Unit) {
+            menu.addView(TextView(this).apply {
+                text = label; setTextColor(Color.WHITE); textSize = 16f; gravity = Gravity.CENTER
+                setPadding(0, dp(14), 0, dp(14))
+                setOnClickListener { closeDrawer(); action() }
+            })
+        }
+        item("Контакты") { showScreen(Screen.CONTACTS) }
+        item("Настройки") { showScreen(Screen.SETTINGS) }
+        item("Очистить журнал звонков") { clearCallLog() }
+        panel.addView(menu, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        val container = FrameLayout(this)
+        container.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        container.addView(panel, FrameLayout.LayoutParams(panelWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+        rootFrame.addView(container, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        drawerView = container
+
+        panel.translationX = -panelWidth.toFloat()
+        panel.post {
+            panel.updateBackgroundSnapshot()
+            scrim.animate().alpha(1f).setDuration(200).start()
+            panel.animate().translationX(0f).setDuration(260).start()
+        }
+    }
+
+    private fun closeDrawer() {
+        val container = drawerView ?: return
+        val panel = container.getChildAt(1)
+        val scrim = container.getChildAt(0)
+        panel.animate().translationX(-panel.width.toFloat()).setDuration(220).withEndAction {
+            rootFrame.removeView(container)
+        }.start()
+        scrim.animate().alpha(0f).setDuration(220).start()
+        drawerView = null
     }
 
     private fun clearCallLog() {
@@ -144,19 +226,16 @@ class MainActivity : AppCompatActivity() {
         if (currentScreen == Screen.HOME) showScreen(Screen.HOME)
     }
 
-    // ---------- Нижняя навигация: 2 пункта + скользящая плашка ----------
+    // ---------- Нижняя навигация ----------
     private fun buildBottomNav(): FrameLayout {
         val container = FrameLayout(this).apply { setBackgroundColor(0xFF1D1A2E.toInt()) }
         navContainer = container
         val accent = Prefs.accentColor(this)
-        val tint = (0x33000000.toInt()) or (accent and 0x00FFFFFF)
 
-        navPill = View(this).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(24).toFloat()
-                setColor(tint)
-                setStroke(dp(1), 0x40FFFFFF)
-            }
+        navPill = LiquidGlassView(this).apply {
+            setGlassColor((0x33000000.toInt()) or (accent and 0x00FFFFFF))
+            setCorner(dp(24).toFloat())
+            setupWithActivityRoot()
         }
         container.addView(navPill, FrameLayout.LayoutParams(0, dp(50)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
 
@@ -175,8 +254,12 @@ class MainActivity : AppCompatActivity() {
                     override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
                 }
             }
-            col.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
-            col.addView(TextView(this).apply { text = label; textSize = 10f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+            col.addView(icon, LinearLayout.LayoutParams(dp(20), dp(20)))
+            col.addView(TextView(this).apply {
+                text = label; textSize = 9.5f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                maxLines = 1; isSingleLine = true
+                setPadding(dp(2), dp(2), dp(2), 0)
+            })
             row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
         container.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -221,6 +304,7 @@ class MainActivity : AppCompatActivity() {
                 else -> { }
             }
         }
+        if (::navPill.isInitialized) navPill.updateBackgroundSnapshot()
     }
 
     private fun card(block: LinearLayout.() -> Unit): MaterialCardView {
@@ -247,7 +331,7 @@ class MainActivity : AppCompatActivity() {
     private fun buildDialerTab(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(20))
+            setPadding(dp(16), dp(20), dp(16), dp(16))
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
@@ -264,7 +348,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(numberField, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) })
 
         suggestionsList = ListView(this).apply { divider = null }
-        root.addView(suggestionsList, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(0)))
+        root.addView(suggestionsList, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0))
         refreshSuggestions()
 
         val rows = listOf(
@@ -277,19 +361,17 @@ class MainActivity : AppCompatActivity() {
             val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             row.forEach { digit ->
                 val sub = digitLetters[digit]
-                val col = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-                }
+                val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
                 col.addView(TextView(this).apply { text = digit; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
                 if (sub != null) col.addView(TextView(this).apply { text = sub; textSize = 7f; setTextColor(0xFF8A8698.toInt()); gravity = Gravity.CENTER })
                 val box = FrameLayout(this).apply {
-                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF2A2640.toInt()) }
+                    background = GradientDrawable().apply { cornerRadius = dp(28).toFloat(); setColor(0xFF2A2640.toInt()) }
                     addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                     setOnClickListener { numberField.append(digit); refreshSuggestions() }
                 }
-                r.addView(box, LinearLayout.LayoutParams(dp(66), dp(66)).apply { setMargins(dp(10), dp(8), dp(10), dp(8)) })
+                r.addView(box, LinearLayout.LayoutParams(0, dp(58), 1f).apply { setMargins(dp(6), dp(6), dp(6), dp(6)) })
             }
-            root.addView(r)
+            root.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
         val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0) }
@@ -367,13 +449,14 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:$number")))
     }
 
-    // ---------- Экран: контакты ----------
+    // ---------- Экран: контакты (фильтруется строкой поиска сверху) ----------
     private fun buildContactsTab(): View {
         if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return permissionNeededView("Нужен доступ к контактам") {
                 requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1)
             }
         }
+        val query = if (::searchField.isInitialized) searchField.text.toString().trim() else ""
         data class C(val name: String, val number: String)
         val list = mutableListOf<C>()
         val cur = contentResolver.query(
@@ -384,14 +467,17 @@ class MainActivity : AppCompatActivity() {
         cur?.use {
             while (it.moveToNext()) list.add(C(it.getString(0) ?: "?", it.getString(1) ?: ""))
         }
-        if (list.isEmpty()) return emptyView("Контактов не найдено")
+        val filtered = if (query.isEmpty()) list else list.filter {
+            it.name.contains(query, ignoreCase = true) || it.number.contains(query)
+        }
+        if (filtered.isEmpty()) return emptyView(if (query.isEmpty()) "Контактов не найдено" else "Ничего не найдено")
 
         val lv = ListView(this)
         lv.setBackgroundColor(0xFF15131F.toInt())
         lv.divider = null
-        lv.adapter = object : ArrayAdapter<C>(this, 0, list) {
+        lv.adapter = object : ArrayAdapter<C>(this, 0, filtered) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val item = list[position]
+                val item = filtered[position]
                 val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)) }
                 row.addView(TextView(this@MainActivity).apply { text = item.name; setTextColor(Color.WHITE); textSize = 16f })
                 row.addView(TextView(this@MainActivity).apply { text = item.number; setTextColor(0xFFA29FB8.toInt()); textSize = 13f })
@@ -400,7 +486,7 @@ class MainActivity : AppCompatActivity() {
         }
         lv.onItemClickListener = AdapterView.OnItemClickListener { _, _, pos, _ ->
             selectNavTab(1)
-            numberField.setText(list[pos].number)
+            numberField.setText(filtered[pos].number)
         }
         return lv
     }
@@ -408,16 +494,13 @@ class MainActivity : AppCompatActivity() {
     // ---------- Экран: главный экран (журнал звонков + фильтры) ----------
     private fun buildCallsTab(): View {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        // Фильтры со скользящей плашкой
-        val filterContainer = FrameLayout(this).apply { setPadding(dp(12), dp(10), dp(12), dp(6)) }
         val accent = Prefs.accentColor(this)
-        val filterPill = View(this).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor((0x33000000.toInt()) or (accent and 0x00FFFFFF))
-                setStroke(dp(1), 0x40FFFFFF)
-            }
+
+        val filterContainer = FrameLayout(this).apply { setPadding(dp(12), dp(10), dp(12), dp(6)) }
+        val filterPill = LiquidGlassView(this).apply {
+            setGlassColor((0x33000000.toInt()) or (accent and 0x00FFFFFF))
+            setCorner(dp(18).toFloat())
+            setupWithActivityRoot()
         }
         filterContainer.addView(filterPill, FrameLayout.LayoutParams(0, dp(36)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
         val filterRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -425,6 +508,7 @@ class MainActivity : AppCompatActivity() {
         filters.forEachIndexed { i, label ->
             filterRow.addView(TextView(this).apply {
                 text = label; textSize = 12f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                maxLines = 1
                 setOnClickListener {
                     callFilter = i
                     positionPill(filterPill, filterContainer, filters.size, i, animate = true)
@@ -433,7 +517,10 @@ class MainActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
         filterContainer.addView(filterRow, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        filterContainer.post { positionPill(filterPill, filterContainer, filters.size, callFilter, animate = false) }
+        filterContainer.post {
+            filterPill.updateBackgroundSnapshot()
+            positionPill(filterPill, filterContainer, filters.size, callFilter, animate = false)
+        }
         root.addView(filterContainer)
 
         if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
@@ -512,201 +599,224 @@ class MainActivity : AppCompatActivity() {
         addView(TextView(this@MainActivity).apply { text = msg; setTextColor(0xFFA29FB8.toInt()); textSize = 15f; gravity = Gravity.CENTER })
     }
 
-    // ---------- Экран: настройки ----------
+    // ---------- Экран: настройки (по разделам, раскрывающиеся) ----------
     private fun buildSettingsTab(): View {
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(18), dp(18), dp(18)) }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
         val accent = Prefs.accentColor(this)
 
-        fun sectionTitle(t: String) {
-            root.addView(TextView(this).apply { text = t; textSize = 13f; setTextColor(0xFF8FA2FF.toInt()); setPadding(0, dp(14), 0, dp(6)) })
+        root.addView(TextView(this).apply {
+            text = "Котозвонок"; textSize = 24f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(10))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        fun button(parent: LinearLayout, t: String, action: (View) -> Unit) {
+            parent.addView(MaterialButton(this).apply {
+                text = t; isAllCaps = false; cornerRadius = dp(26)
+                backgroundTintList = ColorStateList.valueOf(accent)
+                setOnClickListener(action)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         }
-        fun addCard(v: View) {
-            root.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
-        }
-        fun button(t: String, action: (View) -> Unit) {
-            addCard(card {
-                addView(MaterialButton(this@MainActivity).apply {
-                    text = t
-                    isAllCaps = false
-                    cornerRadius = dp(26)
-                    backgroundTintList = ColorStateList.valueOf(accent)
-                    setOnClickListener(action)
-                })
+        fun switchRow(parent: LinearLayout, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(TextView(this).apply { text = label; setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(MaterialSwitch(this).apply {
+                isChecked = checked
+                setOnCheckedChangeListener { _: CompoundButton, c: Boolean -> onChange(c) }
             })
+            parent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
-        fun switchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-            addCard(card {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(this@MainActivity).apply { text = label; setTextColor(Color.WHITE); textSize = 14f },
-                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(MaterialSwitch(this@MainActivity).apply {
-                    isChecked = checked
-                    setOnCheckedChangeListener { _: CompoundButton, c: Boolean -> onChange(c) }
-                })
-            })
+        fun centeredNote(parent: LinearLayout, t: String) {
+            parent.addView(TextView(this).apply {
+                text = t; textSize = 11f; setTextColor(0xFFA29FB8.toInt()); gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         }
 
-        root.addView(TextView(this).apply { text = "Котозвонок"; textSize = 26f; setTextColor(Color.WHITE) })
-
-        sectionTitle("РАЗРЕШЕНИЯ")
-        button("Доступ к звонкам и контактам") {
-            requestPermissions(arrayOf(
-                Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG,
-                Manifest.permission.WRITE_CALL_LOG,
-                Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE
-            ), 1)
-        }
-        button("Показ поверх других окон") {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        }
-        button("Сделать звонилкой по умолчанию") {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val rm = getSystemService(RoleManager::class.java)
-                if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_DIALER)) {
-                    startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_DIALER), 3)
+        // Раскрывающийся раздел
+        fun section(title: String, expanded: Boolean = false, build: (LinearLayout) -> Unit) {
+            val body = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = if (expanded) View.VISIBLE else View.GONE
+                setPadding(0, dp(10), 0, 0)
+            }
+            build(body)
+            val arrow = TextView(this).apply { text = if (expanded) "▲" else "▼"; setTextColor(0xFF8FA2FF.toInt()); textSize = 12f }
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                setOnClickListener {
+                    val show = body.visibility != View.VISIBLE
+                    body.visibility = if (show) View.VISIBLE else View.GONE
+                    arrow.text = if (show) "▲" else "▼"
                 }
-            } else {
-                val i = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
-                i.putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, packageName)
-                startActivity(i)
+            }
+            header.addView(TextView(this).apply {
+                text = title; textSize = 15f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                setPadding(0, dp(4), dp(8), dp(4))
+            })
+            header.addView(arrow)
+            val wrapper = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(6), dp(14), dp(12)) }
+            wrapper.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
+            wrapper.addView(body)
+            root.addView(MaterialCardView(this).apply {
+                radius = dp(18).toFloat()
+                cardElevation = dp(1).toFloat()
+                setCardBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.md_surface))
+                addView(wrapper, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        }
+
+        section("Разрешения", expanded = true) { b ->
+            button(b, "Доступ к звонкам и контактам") {
+                requestPermissions(arrayOf(
+                    Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG,
+                    Manifest.permission.WRITE_CALL_LOG,
+                    Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE
+                ), 1)
+            }
+            button(b, "Показ поверх других окон") {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+            button(b, "Сделать звонилкой по умолчанию") {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val rm = getSystemService(RoleManager::class.java)
+                    if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_DIALER)) {
+                        startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_DIALER), 3)
+                    }
+                } else {
+                    val i = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
+                    i.putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, packageName)
+                    startActivity(i)
+                }
             }
         }
 
-        sectionTitle("ВИД ЗВОНКА")
-        switchRow("Полноэкранный звонок", Prefs.isFullScreenEnabled(this)) { Prefs.setFullScreenEnabled(this, it) }
-        switchRow("После ответа сворачивать в остров", Prefs.collapseToIslandOnAnswer(this)) { Prefs.setCollapseToIslandOnAnswer(this, it) }
-        switchRow("Показывать котиков", Prefs.isCatsEnabled(this)) { Prefs.setCatsEnabled(this, it) }
-
-        sectionTitle("РАЗМЕР МАЛЕНЬКОГО ОКОШКА")
-        val sizeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("Маленький" to 0.85f, "Обычный" to 1.0f, "Крупный" to 1.25f).forEach { (label, scale) ->
-            sizeRow.addView(MaterialButton(this).apply {
-                text = label; isAllCaps = false; cornerRadius = dp(20)
-                val selected = Prefs.overlayScale(this@MainActivity) == scale
-                backgroundTintList = ColorStateList.valueOf(if (selected) accent else 0xFF2A2640.toInt())
-                setOnClickListener { Prefs.setOverlayScale(this@MainActivity, scale); showScreen(Screen.SETTINGS) }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+        section("Вид звонка") { b ->
+            switchRow(b, "Полноэкранный звонок", Prefs.isFullScreenEnabled(this)) { Prefs.setFullScreenEnabled(this, it) }
+            switchRow(b, "После ответа сворачивать в остров", Prefs.collapseToIslandOnAnswer(this)) { Prefs.setCollapseToIslandOnAnswer(this, it) }
+            switchRow(b, "Показывать котиков", Prefs.isCatsEnabled(this)) { Prefs.setCatsEnabled(this, it) }
         }
-        addCard(card { addView(sizeRow) })
 
-        sectionTitle("РИНГТОН")
-        button("Выбрать рингтон") {
-            val current = Prefs.ringtoneUri(this)
-            val i = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
-                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, if (current != null) Uri.parse(current) else null)
+        section("Размер маленького окошка") { b ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            listOf("Маленький" to 0.85f, "Обычный" to 1.0f, "Крупный" to 1.25f).forEach { (label, scale) ->
+                row.addView(MaterialButton(this).apply {
+                    text = label; isAllCaps = false; textSize = 12f; cornerRadius = dp(20)
+                    backgroundTintList = ColorStateList.valueOf(if (Prefs.overlayScale(this@MainActivity) == scale) accent else 0xFF2A2640.toInt())
+                    setOnClickListener { Prefs.setOverlayScale(this@MainActivity, scale); showScreen(Screen.SETTINGS) }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
             }
-            startActivityForResult(i, REQ_RINGTONE)
+            b.addView(row)
         }
-        addCard(card {
-            addView(TextView(this@MainActivity).apply {
-                text = "Звонит рядом с обычным системным сигналом — отключить системный звук для стороннего приложения нельзя."
-                textSize = 11f; setTextColor(0xFFA29FB8.toInt())
-            })
-        })
 
-        sectionTitle("ЦВЕТОВАЯ ТЕМА")
-        val colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        Prefs.ACCENT_PRESETS.forEach { (label, color) ->
-            colorRow.addView(FrameLayout(this).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL; setColor(color)
-                    if (color == accent) setStroke(dp(2), Color.WHITE)
+        section("Рингтон") { b ->
+            button(b, "Выбрать рингтон") {
+                val current = Prefs.ringtoneUri(this)
+                val i = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                    putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
+                    putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                    putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, if (current != null) Uri.parse(current) else null)
                 }
-                setOnClickListener { Prefs.setAccentColor(this@MainActivity, color); recreate() }
-            }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(dp(6), 0, dp(6), 0) })
-        }
-        addCard(card { addView(colorRow) })
-
-        sectionTitle("ШРИФТ")
-        val fontRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("default" to "Обычный", "sans" to "Без засечек", "serif" to "С засечками", "mono" to "Моно").forEach { (key, label) ->
-            fontRow.addView(MaterialButton(this).apply {
-                text = label; isAllCaps = false; textSize = 11f; cornerRadius = dp(18)
-                val selected = Prefs.fontFamily(this@MainActivity) == key
-                backgroundTintList = ColorStateList.valueOf(if (selected) accent else 0xFF2A2640.toInt())
-                setOnClickListener { Prefs.setFontFamily(this@MainActivity, key); recreate() }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
-        }
-        addCard(card { addView(fontRow) })
-
-        sectionTitle("СВОИ КАРТИНКИ")
-        button("Добавить своего кота") {
-            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE) }
-            startActivityForResult(i, REQ_ADD_CAT)
-        }
-        addCard(card {
-            addView(TextView(this@MainActivity).apply {
-                text = "Своих котов добавлено: ${Prefs.getCustomCats(this@MainActivity).size}"
-                setTextColor(0xFFA29FB8.toInt()); textSize = 12f
-            })
-        })
-        button("Удалить всех добавленных котов") {
-            Prefs.clearCustomCats(this)
-            showScreen(Screen.SETTINGS)
+                startActivityForResult(i, REQ_RINGTONE)
+            }
+            centeredNote(b, "Звучит вместе с обычным системным сигналом — заглушить системный звук сторонним приложением нельзя.")
         }
 
-        sectionTitle("ИКОНКИ КНОПОК И ВКЛАДОК")
-        val iconLabels = mapOf(
-            "answer" to "Иконка кнопки «Ответить»",
-            "decline" to "Иконка кнопки «Отклонить»",
-            "search" to "Иконка кнопки «Поиск»",
-            "tab_home" to "Иконка вкладки «Главный экран»",
-            "tab_dialer" to "Иконка вкладки «Клавиатура»"
-        )
-        iconLabels.forEach { (key, label) ->
-            button(label) {
-                pendingIconKey = key
+        section("Цветовая тема") { b ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+            Prefs.ACCENT_PRESETS.forEach { (_, color) ->
+                row.addView(FrameLayout(this).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL; setColor(color)
+                        if (color == accent) setStroke(dp(2), Color.WHITE)
+                    }
+                    setOnClickListener { Prefs.setAccentColor(this@MainActivity, color); recreate() }
+                }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(dp(6), 0, dp(6), 0) })
+            }
+            b.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        }
+
+        section("Шрифт") { b ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            listOf("default" to "Обычный", "sans" to "Без засечек", "serif" to "С засечками", "mono" to "Моно", "sfpro" to "SF Pro").forEach { (key, label) ->
+                row.addView(MaterialButton(this).apply {
+                    text = label; isAllCaps = false; textSize = 10f; cornerRadius = dp(18)
+                    backgroundTintList = ColorStateList.valueOf(if (Prefs.fontFamily(this@MainActivity) == key) accent else 0xFF2A2640.toInt())
+                    setOnClickListener { Prefs.setFontFamily(this@MainActivity, key); recreate() }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+            }
+            b.addView(row)
+            button(b, "Добавить свой шрифт (.ttf/.otf)") {
+                val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) }
+                startActivityForResult(i, REQ_PICK_FONT)
+            }
+            if (Prefs.fontFamily(this) == "custom") centeredNote(b, "Сейчас используется свой шрифт")
+        }
+
+        section("Свои картинки") { b ->
+            button(b, "Добавить своего кота") {
                 val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE) }
-                startActivityForResult(i, REQ_PICK_ICON)
+                startActivityForResult(i, REQ_ADD_CAT)
             }
-        }
-        button("Сбросить все иконки к стандартным") {
-            Prefs.clearAllIcons(this)
-            showScreen(Screen.SETTINGS)
+            centeredNote(b, "Своих котов добавлено: ${Prefs.getCustomCats(this).size}")
+            button(b, "Удалить всех добавленных котов") { Prefs.clearCustomCats(this); showScreen(Screen.SETTINGS) }
         }
 
-        sectionTitle("ЗНАЧОК ПРИЛОЖЕНИЯ (рабочий стол)")
-        addCard(card {
-            addView(TextView(this@MainActivity).apply {
-                text = "Произвольное фото системой не поддерживается — можно выбрать один из трёх готовых вариантов."
-                textSize = 12f; setTextColor(0xFFA29FB8.toInt())
-            })
-        })
-        val iconRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        listOf(
-            Triple("IconDefault", R.drawable.cat6, "Кот-джентльмен"),
-            Triple("IconCat1", R.drawable.cat1, "Серый кот"),
-            Triple("IconCat3", R.drawable.cat3, "Трёхцветный")
-        ).forEach { (alias, res, label) ->
-            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(6)) }
-            col.addView(ImageView(this).apply {
-                setImageResource(res)
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
+        section("Иконки кнопок и вкладок") { b ->
+            val iconLabels = mapOf(
+                "answer" to "Иконка кнопки «Ответить»",
+                "decline" to "Иконка кнопки «Отклонить»",
+                "search" to "Иконка кнопки «Поиск»",
+                "tab_home" to "Иконка вкладки «Главный экран»",
+                "tab_dialer" to "Иконка вкладки «Клавиатура»"
+            )
+            iconLabels.forEach { (key, label) ->
+                button(b, label) {
+                    pendingIconKey = key
+                    val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE) }
+                    startActivityForResult(i, REQ_PICK_ICON)
                 }
-                setOnClickListener { setLauncherIcon(alias) }
-            }, LinearLayout.LayoutParams(dp(56), dp(56)))
-            col.addView(TextView(this).apply { text = label; textSize = 11f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
-            iconRow.addView(col)
+            }
+            button(b, "Сбросить все иконки к стандартным") { Prefs.clearAllIcons(this); showScreen(Screen.SETTINGS) }
         }
-        addCard(card { addView(iconRow) })
 
-        sectionTitle("ПРОВЕРКА")
-        button("Показать тестовый звонок") {
-            if (Prefs.isFullScreenEnabled(this)) {
-                val i = Intent(this, CallScreenActivity::class.java).apply {
-                    putExtra(CallScreenActivity.EXTRA_IS_TEST, true)
-                    putExtra(CallScreenActivity.EXTRA_NAME, "Тестовый Котик")
-                    putExtra(CallScreenActivity.EXTRA_NUMBER, "+7 900 000-00-00")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        section("Значок приложения (рабочий стол)") { b ->
+            centeredNote(b, "Произвольное фото системой не поддерживается — можно выбрать один из трёх готовых вариантов.")
+            val iconRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+            listOf(
+                Triple("IconDefault", R.drawable.cat6, "Кот-джентльмен"),
+                Triple("IconCat1", R.drawable.cat1, "Серый кот"),
+                Triple("IconCat3", R.drawable.cat3, "Трёхцветный")
+            ).forEach { (alias, res, label) ->
+                val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(6)) }
+                col.addView(ImageView(this).apply {
+                    setImageResource(res)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    clipToOutline = true
+                    outlineProvider = object : ViewOutlineProvider() {
+                        override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
+                    }
+                    setOnClickListener { setLauncherIcon(alias) }
+                }, LinearLayout.LayoutParams(dp(56), dp(56)))
+                col.addView(TextView(this).apply { text = label; textSize = 11f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+                iconRow.addView(col)
+            }
+            b.addView(iconRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        }
+
+        section("Проверка") { b ->
+            button(b, "Показать тестовый звонок") {
+                if (Prefs.isFullScreenEnabled(this)) {
+                    val i = Intent(this, CallScreenActivity::class.java).apply {
+                        putExtra(CallScreenActivity.EXTRA_IS_TEST, true)
+                        putExtra(CallScreenActivity.EXTRA_NAME, "Тестовый Котик")
+                        putExtra(CallScreenActivity.EXTRA_NUMBER, "+7 900 000-00-00")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(i)
+                } else {
+                    OverlayManager.show(this, "Тестовый Котик", "+7 900 000-00-00", null, isTest = true)
                 }
-                startActivity(i)
-            } else {
-                OverlayManager.show(this, "Тестовый Котик", "+7 900 000-00-00", null, isTest = true)
             }
         }
 
@@ -735,6 +845,18 @@ class MainActivity : AppCompatActivity() {
             val uri = data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
             Prefs.setRingtoneUri(this, uri?.toString())
             showScreen(Screen.SETTINGS)
+        }
+        if (requestCode == REQ_PICK_FONT && resultCode == RESULT_OK) {
+            data?.data?.let { uri ->
+                try {
+                    val outFile = File(filesDir, "custom_font.ttf")
+                    contentResolver.openInputStream(uri)?.use { inp -> outFile.outputStream().use { out -> inp.copyTo(out) } }
+                    Typeface.createFromFile(outFile) // проверка, что файл — действительно шрифт
+                    Prefs.setCustomFontPath(this, outFile.absolutePath)
+                    Prefs.setFontFamily(this, "custom")
+                    recreate()
+                } catch (e: Exception) { }
+            }
         }
     }
 
