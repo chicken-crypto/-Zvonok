@@ -2,16 +2,20 @@ package com.example.kotozvonok
 
 // Основано на библиотеке "AppleLiquidGlassForAndroid" (классический View, без Compose),
 // перенесено в проект напрямую, чтобы не тянуть внешние зависимости и JitPack.
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import android.view.ViewTreeObserver
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 
 class LiquidGlassView @JvmOverloads constructor(
@@ -36,6 +40,9 @@ class LiquidGlassView @JvmOverloads constructor(
     }
     private val clipPath = Path()
     private val rectF = RectF()
+    private var shimmerPos = -0.4f
+    private var shimmerAnimator: ValueAnimator? = null
+    private val shimmerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     init {
         setWillNotDraw(false)
@@ -53,6 +60,31 @@ class LiquidGlassView @JvmOverloads constructor(
         val colorMatrix = android.graphics.ColorMatrix()
         colorMatrix.setSaturation(1.4f)
         paint.colorFilter = android.graphics.ColorMatrixColorFilter(colorMatrix)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        startShimmer()
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        shimmerAnimator?.cancel()
+        shimmerAnimator = null
+    }
+
+    private fun startShimmer() {
+        shimmerAnimator?.cancel()
+        shimmerAnimator = ValueAnimator.ofFloat(-0.5f, 1.5f).apply {
+            duration = 3200L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            addUpdateListener {
+                shimmerPos = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
     }
 
     fun setupWithRoot(root: View) {
@@ -78,6 +110,7 @@ class LiquidGlassView @JvmOverloads constructor(
     fun updateBackgroundSnapshot() {
         val root = rootView ?: return
         if (root.width == 0 || root.height == 0) return
+        val wasVisible = visibility
         try {
             val scaledWidth = (root.width * downsampleFactor).toInt().coerceAtLeast(1)
             val scaledHeight = (root.height * downsampleFactor).toInt().coerceAtLeast(1)
@@ -90,15 +123,18 @@ class LiquidGlassView @JvmOverloads constructor(
             val canvas = Canvas(backgroundBitmap!!)
             canvas.scale(downsampleFactor, downsampleFactor)
 
-            val wasVisible = visibility
             visibility = View.INVISIBLE
             root.draw(canvas)
-            visibility = wasVisible
-
-            invalidate()
         } catch (e: Exception) {
             e.printStackTrace()
+            // Если снимок не получился — не оставляем вид невидимым навсегда.
+            backgroundBitmap = null
+        } finally {
+            // КРИТИЧНО: видимость обязана вернуться, даже если выше была ошибка —
+            // иначе плашка "стекла" может навсегда пропасть с экрана.
+            visibility = wasVisible
         }
+        invalidate()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -140,12 +176,36 @@ class LiquidGlassView @JvmOverloads constructor(
 
             canvas.restore()
         } else {
-            val bgPaint = Paint().apply { color = 0xFFCCCCCC.toInt() }
-            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+            // Снимка ещё нет (или не получился) — красивый полупрозрачный фон вместо серого прямоугольника,
+            // чтобы плашка никогда не выглядела "пропавшей".
+            val fallback = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(
+                    0f, 0f, width.toFloat(), height.toFloat(),
+                    0x332A2640.toInt(), 0x551D1A2E.toInt(),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, fallback)
         }
 
         val overlayPaint = Paint().apply { color = overlayColor }
         canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, overlayPaint)
+
+        // Переливающийся блик — узкая диагональная полоса света, которая медленно едет по стеклу по кругу.
+        if (width > 0) {
+            val bandWidth = width * 0.5f
+            val x = shimmerPos * (width + bandWidth) - bandWidth
+            shimmerPaint.shader = LinearGradient(
+                x, 0f, x + bandWidth, height.toFloat(),
+                intArrayOf(0x00FFFFFF, 0x30FFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.save()
+            canvas.clipPath(clipPath)
+            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, shimmerPaint)
+            canvas.restore()
+        }
 
         val inset = borderPaint.strokeWidth / 2
         val borderRect = RectF(inset, inset, width - inset, height - inset)

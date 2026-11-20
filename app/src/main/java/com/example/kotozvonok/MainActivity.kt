@@ -56,6 +56,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var searchField: EditText
     private lateinit var navContainer: FrameLayout
     private lateinit var navPill: LiquidGlassView
+    private lateinit var navRow: LinearLayout
+    private lateinit var navWideLabel: TextView
+    private lateinit var searchBox: LiquidGlassView
     private var drawerView: View? = null
     private var currentScreen = Screen.HOME
     private var callFilter = 0
@@ -135,7 +138,7 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(14) })
 
         val accent = Prefs.accentColor(this)
-        val searchBox = LiquidGlassView(this).apply {
+        searchBox = LiquidGlassView(this).apply {
             setGlassColor((0x22000000.toInt()) or (accent and 0x00FFFFFF))
             setCorner(dp(22).toFloat())
             setupWithActivityRoot()
@@ -239,7 +242,7 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(navPill, FrameLayout.LayoutParams(0, dp(50)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
 
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        navRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val items = listOf(Triple("tab_home", R.drawable.ic_home, "Главный экран"), Triple("tab_dialer", R.drawable.ic_dialpad, "Клавиатура"))
         items.forEachIndexed { i, (key, res, label) ->
             val col = LinearLayout(this).apply {
@@ -260,18 +263,52 @@ class MainActivity : AppCompatActivity() {
                 maxLines = 1; isSingleLine = true
                 setPadding(dp(2), dp(2), dp(2), 0)
             })
-            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            navRow.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        container.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        container.addView(navRow, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        navWideLabel = TextView(this).apply {
+            textSize = 15f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            alpha = 0f
+            visibility = View.GONE
+            setOnClickListener { selectNavTab(0) }
+        }
+        container.addView(navWideLabel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         container.post { positionPill(navPill, navContainer, 2, 0, animate = false) }
         return container
     }
 
+    // Когда открыты "Настройки"/"Контакты" — две вкладки снизу плавно прячутся,
+    // а вся плашка растягивается в одну большую с подписью текущего раздела.
+    private fun morphNavFor(s: Screen) {
+        if (!::navRow.isInitialized) return
+        val wide = s == Screen.SETTINGS || s == Screen.CONTACTS
+        if (wide) {
+            navWideLabel.text = if (s == Screen.SETTINGS) "Настройки" else "Контакты"
+            navRow.animate().alpha(0f).setDuration(180).withEndAction { navRow.visibility = View.GONE }.start()
+            navWideLabel.visibility = View.VISIBLE
+            navWideLabel.animate().alpha(1f).setDuration(220).start()
+            navContainer.post {
+                val lp = navPill.layoutParams as FrameLayout.LayoutParams
+                lp.width = navContainer.width - navContainer.paddingLeft - navContainer.paddingRight - dp(16)
+                lp.marginStart = dp(8)
+                navPill.layoutParams = lp
+                navPill.animate().translationX(0f).setDuration(260).start()
+            }
+        } else {
+            navWideLabel.animate().alpha(0f).setDuration(160).withEndAction { navWideLabel.visibility = View.GONE }.start()
+            navRow.visibility = View.VISIBLE
+            navRow.animate().alpha(1f).setDuration(200).start()
+            positionPill(navPill, navContainer, 2, if (s == Screen.HOME) 0 else 1, animate = true)
+        }
+    }
+
     private fun positionPill(pill: View, parent: FrameLayout, count: Int, index: Int, animate: Boolean) {
-        val w = parent.width
-        if (w == 0) return
-        val seg = w / count
+        // Используем ширину БЕЗ отступов контейнера — иначе плашка съезжает относительно текста.
+        val usable = parent.width - parent.paddingLeft - parent.paddingRight
+        if (usable <= 0) return
+        val seg = usable / count
         val lp = pill.layoutParams as FrameLayout.LayoutParams
         lp.width = seg - dp(16)
         lp.marginStart = dp(8)
@@ -297,14 +334,37 @@ class MainActivity : AppCompatActivity() {
         }
         applyFont(view)
         content.addView(view)
-        if (::navContainer.isInitialized) {
-            when (s) {
-                Screen.HOME -> positionPill(navPill, navContainer, 2, 0, animate = true)
-                Screen.DIALER -> positionPill(navPill, navContainer, 2, 1, animate = true)
-                else -> { }
-            }
-        }
+        morphNavFor(s)
         if (::navPill.isInitialized) navPill.updateBackgroundSnapshot()
+        if (::searchBox.isInitialized) searchBox.updateBackgroundSnapshot()
+    }
+
+    // Переиспользуемый "стеклянный" переключатель вариантов со скользящей плашкой
+    private fun glassSelector(labels: List<String>, selectedIndex: Int, accent: Int, onSelect: (Int) -> Unit): View {
+        val container = FrameLayout(this)
+        val pill = LiquidGlassView(this).apply {
+            setGlassColor((0x33000000.toInt()) or (accent and 0x00FFFFFF))
+            setCorner(dp(18).toFloat())
+            setupWithActivityRoot()
+        }
+        container.addView(pill, FrameLayout.LayoutParams(0, dp(36)).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        labels.forEachIndexed { i, label ->
+            row.addView(TextView(this).apply {
+                text = label; textSize = 11f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                maxLines = 1
+                setOnClickListener {
+                    positionPill(pill, container, labels.size, i, animate = true)
+                    onSelect(i)
+                }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
+        container.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36)))
+        container.post {
+            pill.updateBackgroundSnapshot()
+            positionPill(pill, container, labels.size, selectedIndex, animate = false)
+        }
+        return container
     }
 
     private fun card(block: LinearLayout.() -> Unit): MaterialCardView {
@@ -470,7 +530,16 @@ class MainActivity : AppCompatActivity() {
         val filtered = if (query.isEmpty()) list else list.filter {
             it.name.contains(query, ignoreCase = true) || it.number.contains(query)
         }
-        if (filtered.isEmpty()) return emptyView(if (query.isEmpty()) "Контактов не найдено" else "Ничего не найдено")
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(TextView(this).apply {
+            text = "↻ Обновить"; textSize = 13f; setTextColor(0xFFA29FB8.toInt()); gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(4))
+            setOnClickListener { showScreen(Screen.CONTACTS) }
+        })
+        if (filtered.isEmpty()) {
+            root.addView(emptyView(if (query.isEmpty()) "Контактов не найдено" else "Ничего не найдено"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            return root
+        }
 
         val lv = ListView(this)
         lv.setBackgroundColor(0xFF15131F.toInt())
@@ -488,7 +557,8 @@ class MainActivity : AppCompatActivity() {
             selectNavTab(1)
             numberField.setText(filtered[pos].number)
         }
-        return lv
+        root.addView(lv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        return root
     }
 
     // ---------- Экран: главный экран (журнал звонков + фильтры) ----------
@@ -521,7 +591,14 @@ class MainActivity : AppCompatActivity() {
             filterPill.updateBackgroundSnapshot()
             positionPill(filterPill, filterContainer, filters.size, callFilter, animate = false)
         }
-        root.addView(filterContainer)
+        val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        topRow.addView(filterContainer, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        topRow.addView(TextView(this).apply {
+            text = "↻"; textSize = 20f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding(dp(10), 0, dp(14), 0)
+            setOnClickListener { showScreen(Screen.HOME) }
+        })
+        root.addView(topRow)
 
         if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
             root.addView(permissionNeededView("Нужен доступ к журналу звонков") {
@@ -698,15 +775,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         section("Размер маленького окошка") { b ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            listOf("Маленький" to 0.85f, "Обычный" to 1.0f, "Крупный" to 1.25f).forEach { (label, scale) ->
-                row.addView(MaterialButton(this).apply {
-                    text = label; isAllCaps = false; textSize = 12f; cornerRadius = dp(20)
-                    backgroundTintList = ColorStateList.valueOf(if (Prefs.overlayScale(this@MainActivity) == scale) accent else 0xFF2A2640.toInt())
-                    setOnClickListener { Prefs.setOverlayScale(this@MainActivity, scale); showScreen(Screen.SETTINGS) }
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
-            }
-            b.addView(row)
+            val options = listOf("Маленький" to 0.85f, "Обычный" to 1.0f, "Крупный" to 1.25f)
+            val selected = options.indexOfFirst { it.second == Prefs.overlayScale(this) }.coerceAtLeast(0)
+            b.addView(glassSelector(options.map { it.first }, selected, accent) { i ->
+                Prefs.setOverlayScale(this, options[i].second); showScreen(Screen.SETTINGS)
+            })
         }
 
         section("Рингтон") { b ->
@@ -737,15 +810,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         section("Шрифт") { b ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            listOf("default" to "Обычный", "sans" to "Без засечек", "serif" to "С засечками", "mono" to "Моно", "sfpro" to "SF Pro").forEach { (key, label) ->
-                row.addView(MaterialButton(this).apply {
-                    text = label; isAllCaps = false; textSize = 10f; cornerRadius = dp(18)
-                    backgroundTintList = ColorStateList.valueOf(if (Prefs.fontFamily(this@MainActivity) == key) accent else 0xFF2A2640.toInt())
-                    setOnClickListener { Prefs.setFontFamily(this@MainActivity, key); recreate() }
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
-            }
-            b.addView(row)
+            val fonts = listOf("default" to "Обычный", "sans" to "Без засечек", "serif" to "С засечками", "mono" to "Моно", "sfpro" to "SF Pro")
+            val selected = fonts.indexOfFirst { it.first == Prefs.fontFamily(this) }.coerceAtLeast(0)
+            b.addView(glassSelector(fonts.map { it.second }, selected, accent) { i ->
+                Prefs.setFontFamily(this, fonts[i].first); recreate()
+            })
             button(b, "Добавить свой шрифт (.ttf/.otf)") {
                 val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) }
                 startActivityForResult(i, REQ_PICK_FONT)
